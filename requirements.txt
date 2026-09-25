@@ -1,0 +1,16 @@
+duckdb>=1.0
+pymupdf>=1.24
+python-docx>=1.1
+python-pptx>=0.6
+openpyxl>=3.1
+pyzotero>=1.15
+
+# Slow-path fallback for filetypes with no fast in-process library
+# (mobi, djvu, chm, ris, html). Install separately:
+#   pipx install markitdown
+#   pipx inject markitdown 'markitdown[pdf]'
+# markitdown itself is NOT a pip dependency of this package.
+
+# Also required, not pip-installable:
+#   rclone   (https://rclone.org) — configure remotes with `rclone config`
+#   soffice  (LibreOffice) — for legacy .doc/.ppt/.xls conversion
