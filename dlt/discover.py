@@ -199,9 +199,11 @@ def scan(remotes=None, fresh=False, log=print):
 
 def insert_new(con, found, categorize_fn=None, dry_run=False, log=print):
     """categorize_fn(path) -> (category, topic); defaults to ('uncategorized', top-level folder)."""
-    existing_paths = {r[0] for r in con.execute("select path from documents").fetchall()}
-    new_rows = [(s, p, sz, mt) for s, p, sz, mt in found if p not in existing_paths]
-    log(f"catalog has {len(existing_paths)} path(s); {len(new_rows)} new of {len(found)} found")
+    # Dedup per (source, path): the same relative path on two remotes is two documents
+    # (item_key_for() already includes the source).
+    existing = {(r[0], r[1]) for r in con.execute("select source, path from documents").fetchall()}
+    new_rows = [(s, p, sz, mt) for s, p, sz, mt in found if (s, p) not in existing]
+    log(f"catalog has {len(existing)} path(s); {len(new_rows)} new of {len(found)} found")
     if not new_rows:
         return 0
 
