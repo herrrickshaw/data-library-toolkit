@@ -94,6 +94,18 @@ def walk(remote_root, folder_path, depth, found, archives, skipped, source=None)
             skipped.append({"path": target, "reason": "no subfolders but still times out"})
         return
 
+    # Files sitting directly in this folder are not inside any subfolder, so the
+    # recursion below never sees them: list them with a cheap non-recursive call.
+    loose = _run(
+        [config.RCLONE_BIN, "lsf", target, "--files-only", "--format", "pst", "--separator", "\t"],
+        60,
+    )
+    if loose is not None and loose.returncode == 0:
+        rows = [tuple(l.split("\t")) for l in loose.stdout.splitlines() if len(l.split("\t")) == 3]
+        _extract(rows, folder_path, found, archives, source)
+    else:
+        skipped.append({"path": target, "reason": "could not list files directly in this folder"})
+
     for sub in subfolders:
         sub_path = f"{folder_path}/{sub}" if folder_path else sub
         walk(remote_root, sub_path, depth + 1, found, archives, skipped, source)
