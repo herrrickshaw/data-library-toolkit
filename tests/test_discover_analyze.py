@@ -23,7 +23,11 @@ case "$*" in
     esac;;
   *-R*)
     case "$remote" in
-      fake:docs) printf 'x.pdf\t10\t2024-01-02 03:04:05\nsub/y.DOCX\t20\t2024-02-03 04:05:06\nz.txt\t1\t2024-01-01 00:00:00\nbak.zip\t5\t2024-01-01 00:00:00\n';;
+      fake:docs)
+        printf 'x.pdf\t10\t2024-01-02 03:04:05\n'
+        printf 'sub/y.DOCX\t20\t2024-02-03 04:05:06\n'
+        printf 'z.txt\t1\t2024-01-01 00:00:00\n'
+        printf 'bak.zip\t5\t2024-01-01 00:00:00\n';;
       fake:slow) exit 1;;
       fake:slow/a) printf 'p.pptx\t1\tbad-date\n';;
       fake:slow/b) printf 'q.xls\t2\t2023-05-06 07:08:09\n';;
@@ -53,7 +57,7 @@ def test_discover_and_analyze_match_golden(isolated_config, tmp_path, monkeypatc
     out = analyze.generate(con, log=logs.append)
     con.close()
     # GROUP BY tie order is not deterministic in DuckDB, so compare sorted lines.
-    report = sorted(l for l in Path(out).read_text().splitlines() if not l.startswith("Generated "))
+    report = sorted(ln for ln in Path(out).read_text().splitlines() if not ln.startswith("Generated "))
     snap = {"found": sorted(found), "archives": archives, "skipped": skipped,
             "inserted": [n, n_again], "docs": [list(d) for d in docs], "report": report,
             "logs": [str(x).replace(str(tmp_path), "<TMP>") for x in logs]}
