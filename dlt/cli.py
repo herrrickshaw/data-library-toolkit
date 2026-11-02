@@ -85,7 +85,8 @@ def _cmd_status(args) -> None:
 
 def _cmd_analyze(args) -> None:
     from . import analyze
-    con = connect(read_only=True)
+    # Not read_only: connect() runs CREATE ... IF NOT EXISTS, which DuckDB rejects on a read-only attach.
+    con = connect()
     analyze.generate(con, out_path=Path(args.out) if args.out else None)
     con.close()
 

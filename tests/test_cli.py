@@ -30,3 +30,10 @@ def test_status_runs_on_empty_catalog(isolated_config, monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["dlt", "status"])
     cli.main()
     assert "catalog: 0 documents" in capsys.readouterr().out
+
+
+def test_analyze_command_writes_report(isolated_config, monkeypatch, tmp_path):
+    out = tmp_path / "report.md"
+    monkeypatch.setattr("sys.argv", ["dlt", "analyze", "--out", str(out)])
+    cli.main()
+    assert out.read_text().startswith("# Content analysis")
