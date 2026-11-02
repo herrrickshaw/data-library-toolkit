@@ -4,29 +4,39 @@ DuckDB schema for the two core tables (`documents`, `fulltext_md`) plus a
 single-writer, so a discovery/analyze run started while a conversion batch
 is mid-flight should wait its turn rather than crash.
 """
+from __future__ import annotations
+
 import time
 
 import duckdb
 
 from . import config
 
+# Shared by discover.py and zotero_index.py (12 positional values).
+DOCUMENT_INSERT_SQL = """
+    insert into documents (item_key, title, path, source, category, topic,
+                            filetype, year, md5, is_duplicate, duplicate_of, mtime)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    on conflict (item_key) do nothing
+"""
 
-def connect(read_only=False, max_wait_s=4 * 3600, poll_s=15):
+
+def connect(read_only: bool = False, max_wait_s: float = 4 * 3600, poll_s: float = 15):
+    """Open the catalog, retrying on a writer lock (DuckDB is single-writer) up to max_wait_s."""
     deadline = time.time() + max_wait_s
-    attempt = 0
     while True:
         try:
             con = duckdb.connect(str(config.CATALOG_DB), read_only=read_only)
             init_schema(con)
             return con
         except duckdb.IOException:
-            attempt += 1
             if time.time() > deadline:
                 raise
             time.sleep(poll_s)
 
 
-def init_schema(con):
+def init_schema(con) -> None:
+    """Create tables and indexes if they do not exist."""
     con.execute("""
         CREATE TABLE IF NOT EXISTS documents (
             item_key VARCHAR PRIMARY KEY,
@@ -69,7 +79,8 @@ def init_schema(con):
     con.execute("CREATE INDEX IF NOT EXISTS idx_fulltext_md_status ON fulltext_md(status)")
 
 
-def status_summary(con):
+def status_summary(con) -> dict:
+    """{"total", "done", "remaining", "by_status": [(status, count)]} over non-duplicate documents."""
     total = con.execute("select count(*) from documents where is_duplicate=false").fetchone()[0]
     done = con.execute("select count(*) from fulltext_md").fetchone()[0]
     by_status = con.execute("select status, count(*) from fulltext_md group by 1 order by 2 desc").fetchall()
