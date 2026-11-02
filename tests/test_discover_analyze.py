@@ -52,7 +52,8 @@ def test_discover_and_analyze_match_golden(isolated_config, tmp_path, monkeypatc
     ).fetchall()
     out = analyze.generate(con, log=logs.append)
     con.close()
-    report = "\n".join(l for l in Path(out).read_text().splitlines() if not l.startswith("Generated "))
+    # GROUP BY tie order is not deterministic in DuckDB, so compare sorted lines.
+    report = sorted(l for l in Path(out).read_text().splitlines() if not l.startswith("Generated "))
     snap = {"found": sorted(found), "archives": archives, "skipped": skipped,
             "inserted": [n, n_again], "docs": [list(d) for d in docs], "report": report,
             "logs": [str(x).replace(str(tmp_path), "<TMP>") for x in logs]}
