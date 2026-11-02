@@ -31,4 +31,4 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "BLE", "UP"]
-ignore = ["UP006", "UP007", "UP035"]  # keep typing.* spellings: Python 3.9 compatible
+ignore = ["UP006", "UP007", "UP035", "UP045"]  # keep typing.* spellings: Python 3.9 compatible
