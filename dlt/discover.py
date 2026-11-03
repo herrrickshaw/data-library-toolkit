@@ -16,20 +16,31 @@ whole run.
 Checkpointed (one line per top-level unit swept, per remote) so an
 interrupted run resumes instead of re-scanning everything.
 """
+from __future__ import annotations
+
+import datetime
 import hashlib
 import json
+import logging
 import subprocess
 from pathlib import Path
+from typing import Callable, Optional
 
 from . import config
+from .catalog import DOCUMENT_INSERT_SQL
+
+Log = Callable[[str], None]
+logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILE = config.DATA_DIR / "discover_checkpoint.jsonl"
 
 
 def _run(cmd, timeout):
+    """subprocess.run with capture; None on timeout."""
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
+        logger.warning("timed out after %ss: %s", timeout, " ".join(map(str, cmd[:4])))
         return None
 
 
@@ -99,12 +110,13 @@ def walk(remote_root, folder_path, depth, found, archives, skipped, source=None)
         walk(remote_root, sub_path, depth + 1, found, archives, skipped, source)
 
 
-def item_key_for(source, path):
+def item_key_for(source: str, path: str) -> str:
+    """Stable catalog key: "AUTO_" + first 12 hex of md5(source:path)."""
     return "AUTO_" + hashlib.md5(f"{source}:{path}".encode()).hexdigest()[:12]
 
 
-def _mtime_ms(mtime_str):
-    import datetime
+def _mtime_ms(mtime_str: str) -> Optional[int]:
+    """rclone "YYYY-MM-DD HH:MM:SS" (UTC) -> ms since epoch; None if unparseable."""
     try:
         dt = datetime.datetime.strptime(mtime_str[:19], "%Y-%m-%d %H:%M:%S")
         return int(dt.replace(tzinfo=datetime.timezone.utc).timestamp() * 1000)
@@ -136,7 +148,7 @@ def _checkpoint(remote, folder, source, found, archives, skipped):
                              "found": found, "archives": archives, "skipped": skipped}) + "\n")
 
 
-def scan(remotes=None, fresh=False, log=print):
+def scan(remotes=None, fresh: bool = False, log: Log = print):
     """Walk every configured remote, returns (found, archives, skipped).
     found/archives/skipped accumulate via a checkpoint file, so re-running
     after an interruption picks up where it left off."""
@@ -160,7 +172,8 @@ def scan(remotes=None, fresh=False, log=print):
                 60,
             )
             if result is not None and result.returncode == 0:
-                rows = [tuple(l.split("\t")) for l in result.stdout.splitlines() if len(l.split("\t")) == 3]
+                split_lines = (line.split("\t") for line in result.stdout.splitlines())
+                rows = [tuple(parts) for parts in split_lines if len(parts) == 3]
                 _extract(rows, "", found, archives, source)
             all_found.extend((source, p, sz, mt) for p, sz, mt in found)
             all_archives.extend(archives)
@@ -169,7 +182,8 @@ def scan(remotes=None, fresh=False, log=print):
         for folder in top_folders:
             if folder.lower() in config.SKIP_FOLDERS:
                 log(f"skip {remote}{folder} (configured skip list)")
-                _checkpoint(remote, folder, source, [], [], [{"path": f"{remote}{folder}", "reason": "configured_skip"}])
+                skip_note = {"path": f"{remote}{folder}", "reason": "configured_skip"}
+                _checkpoint(remote, folder, source, [], [], [skip_note])
                 continue
             if (remote, folder) in done_units:
                 continue
@@ -185,7 +199,7 @@ def scan(remotes=None, fresh=False, log=print):
     return all_found, all_archives, all_skipped
 
 
-def insert_new(con, found, categorize_fn=None, dry_run=False, log=print):
+def insert_new(con, found, categorize_fn=None, dry_run: bool = False, log: Log = print) -> int:
     """categorize_fn(path) -> (category, topic); defaults to ('uncategorized', top-level folder)."""
     existing_paths = {r[0] for r in con.execute("select path from documents").fetchall()}
     new_rows = [(s, p, sz, mt) for s, p, sz, mt in found if p not in existing_paths]
@@ -200,7 +214,7 @@ def insert_new(con, found, categorize_fn=None, dry_run=False, log=print):
     categorize_fn = categorize_fn or default_categorize
 
     prepared = []
-    for source, path, size_str, mtime_str in new_rows:
+    for source, path, _size_str, mtime_str in new_rows:
         item_key = item_key_for(source, path)
         title = Path(path).name
         filetype = Path(path).suffix.lstrip(".").lower() or "unknown"
@@ -214,12 +228,7 @@ def insert_new(con, found, categorize_fn=None, dry_run=False, log=print):
         return len(prepared)
 
     before = con.execute("select count(*) from documents").fetchone()[0]
-    con.executemany("""
-        insert into documents (item_key, title, path, source, category, topic,
-                                filetype, year, md5, is_duplicate, duplicate_of, mtime)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        on conflict (item_key) do nothing
-    """, prepared)
+    con.executemany(DOCUMENT_INSERT_SQL, prepared)
     after = con.execute("select count(*) from documents").fetchone()[0]
     log(f"inserted {after - before} new row(s) ({before} -> {after})")
     return after - before

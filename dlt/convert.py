@@ -28,10 +28,15 @@ Design notes (each one earned from a real failure, not theoretical):
    folder) and tracked separately from conversion status (`cloud_status`),
    so a failed copy-back self-heals on the next run without re-converting.
 """
+from __future__ import annotations
+
+import logging
 import shutil
 import subprocess
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Dict, Optional, Set, Tuple
 
 import docx as python_docx
 import fitz  # PyMuPDF
@@ -39,7 +44,13 @@ import openpyxl
 import pptx as python_pptx
 
 from . import config
-from .catalog import connect
+from .catalog import connect, status_summary
+
+logger = logging.getLogger(__name__)
+
+# (text, error): exactly one of the two is None.
+Extraction = Tuple[Optional[str], Optional[str]]
+Log = Callable[[str], None]
 
 fitz.TOOLS.mupdf_display_errors(False)
 fitz.TOOLS.mupdf_display_warnings(False)
@@ -54,7 +65,8 @@ SOFFICE_FILTER_BY_FILETYPE = {
 
 # ── per-filetype extraction ──────────────────────────────────────────────
 
-def extract_text_fitz(path):
+def extract_text_fitz(path) -> Extraction:
+    """PDF/EPUB text via PyMuPDF; pages joined by blank lines."""
     doc = fitz.open(path)
     try:
         if doc.needs_pass:
@@ -64,7 +76,8 @@ def extract_text_fitz(path):
         doc.close()
 
 
-def extract_text_docx(path):
+def extract_text_docx(path) -> Extraction:
+    """Paragraphs then tables (cells joined by " | ") from a .docx."""
     d = python_docx.Document(str(path))
     parts = [p.text for p in d.paragraphs if p.text.strip()]
     for table in d.tables:
@@ -73,7 +86,8 @@ def extract_text_docx(path):
     return "\n\n".join(parts), None
 
 
-def extract_text_pptx(path):
+def extract_text_pptx(path) -> Extraction:
+    """One "## Slide N" block per slide containing text or table rows."""
     prs = python_pptx.Presentation(str(path))
     parts = []
     for i, slide in enumerate(prs.slides, 1):
@@ -92,7 +106,8 @@ def extract_text_pptx(path):
     return "\n\n".join(parts), None
 
 
-def extract_text_xlsx(path):
+def extract_text_xlsx(path) -> Extraction:
+    """One "## Sheet: name" block per non-empty worksheet (cached values)."""
     wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
     try:
         parts = []
@@ -108,7 +123,8 @@ def extract_text_xlsx(path):
         wb.close()
 
 
-def extract_text_markitdown_fallback(path):
+def extract_text_markitdown_fallback(path) -> Extraction:
+    """Slow path: shell out to markitdown for filetypes with no in-process extractor."""
     try:
         result = subprocess.run(
             [config.MARKITDOWN_BIN, str(path)],
@@ -121,23 +137,29 @@ def extract_text_markitdown_fallback(path):
     return result.stdout, None
 
 
-def extract_text(path, filetype):
+# Filetype -> in-process extractor. Add a new format by adding an entry here.
+EXTRACTORS: Dict[str, Callable[..., Extraction]] = {
+    "pdf": extract_text_fitz,
+    "epub": extract_text_fitz,
+    "docx": extract_text_docx,
+    "pptx": extract_text_pptx,
+    "xlsx": extract_text_xlsx,
+}
+
+
+def extract_text(path, filetype) -> Extraction:
+    """Extract text from `path`; returns (text, None) or (None, error message)."""
     ft = (filetype or "").lower()
+    extractor = EXTRACTORS.get(ft)
+    if extractor is None:
+        return extract_text_markitdown_fallback(path)
     try:
-        if ft in ("pdf", "epub"):
-            return extract_text_fitz(path)
-        if ft == "docx":
-            return extract_text_docx(path)
-        if ft == "pptx":
-            return extract_text_pptx(path)
-        if ft == "xlsx":
-            return extract_text_xlsx(path)
+        return extractor(path)
     except Exception as e:  # noqa: BLE001 — any real-world file can be malformed
         return None, f"{ft} extraction error: {str(e)[-400:]}"
-    return extract_text_markitdown_fallback(path)
 
 
-def convert_batch_soffice(items):
+def convert_batch_soffice(items) -> Dict[str, Extraction]:
     """items: list of (item_key, staged_path, ext, filetype). One `soffice
     --convert-to` call PER FILTER GROUP (doc/ppt share one, xls needs
     another — see module docstring point 3)."""
@@ -168,7 +190,7 @@ def convert_batch_soffice(items):
                 capture_output=True, text=True, timeout=config.SOFFICE_TIMEOUT_S,
             )
         except subprocess.TimeoutExpired:
-            pass  # partial output, if any, is still picked up below
+            logger.warning("soffice timed out after %ss; picking up any partial output", config.SOFFICE_TIMEOUT_S)
         for item_key, _staged_path, _ext, out_ext in group:
             out_file = batch_out / f"{item_key}{out_ext}"
             if out_file.exists():
@@ -183,7 +205,8 @@ def convert_batch_soffice(items):
 
 # ── rclone batch I/O ──────────────────────────────────────────────────────
 
-def bulk_fetch(items_by_source):
+def bulk_fetch(items_by_source) -> None:
+    """Stage every (item_key, path) for each source under config.FETCH_DIR (one rclone call per source)."""
     for source, items in items_by_source.items():
         if not items:
             continue
@@ -213,10 +236,12 @@ def bulk_fetch(items_by_source):
                 capture_output=True, text=True, timeout=config.RCLONE_TIMEOUT_S,
             )
         except subprocess.TimeoutExpired:
-            pass  # partial fetch; per-item staged.exists() check below handles it
+            # partial fetch; the per-item staged.exists() check in run() handles it
+            logger.warning("rclone fetch from %s timed out after %ss", source, config.RCLONE_TIMEOUT_S)
 
 
-def bulk_upload(sources_present):
+def bulk_upload(sources_present) -> Dict[str, bool]:
+    """Copy each source's staged upload dir to its cloud destination; True per source on success."""
     results = {}
     for source in sources_present:
         local_dir = config.UPLOAD_DIR / _safe_dirname(source)
@@ -231,15 +256,17 @@ def bulk_upload(sources_present):
             )
             results[source] = result.returncode == 0
         except subprocess.TimeoutExpired:
+            logger.warning("rclone upload to %s timed out after %ss", source, config.RCLONE_TIMEOUT_S)
             results[source] = False
     return results
 
 
-def _safe_dirname(source):
+def _safe_dirname(source: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in source)
 
 
-def safe_title_for(title):
+def safe_title_for(title: Optional[str]) -> str:
+    """Filesystem-safe title (extension stripped, max 80 chars)."""
     title = title or "untitled"
     low = title.lower()
     for ext in config.DOCUMENT_EXTENSIONS:
@@ -249,13 +276,14 @@ def safe_title_for(title):
     return "".join(c if c.isalnum() or c in " -_." else "_" for c in title)[:80]
 
 
-def ext_for(catalog_path):
+def ext_for(catalog_path: str) -> str:
+    """Dotted, sanitised extension of a catalog path (".bin" if none)."""
     suffix = Path(catalog_path).suffix.lstrip(".")
     safe = "".join(c for c in suffix if c.isalnum())[:10]
     return f".{safe}" if safe else ".bin"
 
 
-def md_output_path(item_key, title):
+def md_output_path(item_key: str, title: Optional[str]) -> Path:
     return config.MD_OUTPUT_DIR / f"{item_key}_{safe_title_for(title)}.md"
 
 
@@ -268,7 +296,8 @@ def _record(con, item_key, title, source, catalog_path, md_path, status, chars, 
     )
 
 
-def retry_cloud_failures(con, limit=200, log=print):
+def retry_cloud_failures(con, limit=200, log: Log = print) -> None:
+    """Re-upload converted files whose cloud copy-back failed or never ran."""
     rows = con.execute("""
         select item_key, source, md_path, title
         from fulltext_md where status='ok' and (cloud_status='failed' or cloud_status is null)
@@ -298,77 +327,83 @@ def retry_cloud_failures(con, limit=200, log=print):
     log(f"  ...{healed}/{len(rows)} healed.")
 
 
-def run(max_docs=None, status_only=False, log=print):
-    config.ensure_dirs()
-    max_docs = max_docs or config.MAX_DOCS_PER_RUN
-    con = connect()
+PENDING_WHERE = "d.is_duplicate=false and f.item_key is null"
 
-    if status_only:
-        from .catalog import status_summary
-        s = status_summary(con)
-        log(f"catalog: {s['total']} documents, {s['done']} processed, {s['remaining']} remaining")
-        for status, count in s["by_status"]:
-            log(f"  {status}: {count}")
-        return s
 
-    import shutil as _sh
-    free_gb = _sh.disk_usage(config.DATA_DIR).free / (1024 ** 3)
-    if free_gb < config.DISK_SAFETY_MARGIN_GB:
-        log(f"disk safety margin hit (<{config.DISK_SAFETY_MARGIN_GB} GB free); stopping.")
-        con.close()
-        return
+@dataclass
+class BatchCounts:
+    """Per-batch outcome tallies, reported in the final log line."""
+    ok: int = 0
+    fetch_failed: int = 0
+    convert_failed: int = 0
+    too_large: int = 0
+    archive_gone: int = 0
+    cloud_failed: int = 0
 
-    retry_cloud_failures(con, log=log)
 
-    pending = con.execute("""
+def _log_status(con, log: Log) -> dict:
+    s = status_summary(con)
+    log(f"catalog: {s['total']} documents, {s['done']} processed, {s['remaining']} remaining")
+    for status, count in s["by_status"]:
+        log(f"  {status}: {count}")
+    return s
+
+
+def _select_pending(con, max_docs: int):
+    """Return (rows of up to max_docs pending documents, total pending count)."""
+    pending = con.execute(f"""
         select d.item_key, d.title, d.path, d.source, d.filetype
         from documents d
         left join fulltext_md f on f.item_key = d.item_key
-        where d.is_duplicate=false and f.item_key is null
+        where {PENDING_WHERE}
         order by d.item_key
         limit ?
     """, [max_docs]).fetchall()
-    total_pending = con.execute("""
+    total = con.execute(f"""
         select count(*) from documents d
         left join fulltext_md f on f.item_key = d.item_key
-        where d.is_duplicate=false and f.item_key is null
+        where {PENDING_WHERE}
     """).fetchone()[0]
-    log(f"→ {total_pending} document(s) pending. This batch: {len(pending)} docs.")
+    return pending, total
 
-    _sh.rmtree(config.FETCH_DIR, ignore_errors=True)
-    _sh.rmtree(config.UPLOAD_DIR, ignore_errors=True)
 
-    n_archive_gone = n_unsupported = 0
-    to_fetch_by_source, item_meta = {}, {}
+def _partition_pending(con, pending, counts: BatchCounts):
+    """Record archive-internal paths as unconvertible; group the rest by source.
+
+    Returns (to_fetch_by_source {source: [(item_key, path)]}, item_meta {item_key: (title, path, source, filetype)}).
+    """
+    to_fetch_by_source: Dict[str, list] = {}
+    item_meta = {}
     for item_key, title, path, source, filetype in pending:
         item_meta[item_key] = (title, path, source, filetype)
         if "!" in path:
             _record(con, item_key, title, source, path, None, "archive_not_persisted", None, None,
                     "path is inside an archive not persisted at discovery time")
-            n_archive_gone += 1
+            counts.archive_gone += 1
             continue
         to_fetch_by_source.setdefault(source, []).append((item_key, path))
+    return to_fetch_by_source, item_meta
 
-    log(f"  bulk-fetching {sum(len(v) for v in to_fetch_by_source.values())} file(s) "
-        f"across {len(to_fetch_by_source)} source(s)...")
-    bulk_fetch(to_fetch_by_source)
 
-    n_ok = n_fetch_failed = n_convert_failed = n_too_large = n_cloud_failed = 0
-    sources_uploaded = set()
+def _finalize_ok(con, counts: BatchCounts, item_key, title, source, path, text, staged, upload_dir):
+    """Write the .md, stage source + md for upload, and record success."""
+    out_path = md_output_path(item_key, title)
+    out_path.write_text(text)
+    safe_title = safe_title_for(title)
+    shutil.copy2(staged, upload_dir / f"{item_key}_{safe_title}{ext_for(path)}")
+    shutil.copy2(out_path, upload_dir / f"{item_key}_{safe_title}.md")
+    size_mb = staged.stat().st_size / (1024 * 1024)
+    _record(con, item_key, title, source, path, str(out_path), "ok", len(text), round(size_mb, 2), None)
+    counts.ok += 1
+
+
+def _convert_fetched(con, to_fetch_by_source, item_meta, counts: BatchCounts):
+    """Extract each fetched file in-process; queue legacy Office files for soffice.
+
+    Returns (soffice_queue, sources_uploaded).
+    """
+    sources_uploaded: Set[str] = set()
     soffice_queue = []
-
-    def finalize_ok(item_key, title, source, path, text, staged, upload_dir):
-        nonlocal n_ok
-        out_path = md_output_path(item_key, title)
-        out_path.write_text(text)
-        safe_title = safe_title_for(title)
-        shutil.copy2(staged, upload_dir / f"{item_key}_{safe_title}{ext_for(path)}")
-        shutil.copy2(out_path, upload_dir / f"{item_key}_{safe_title}.md")
-        sources_uploaded.add(source)
-        size_mb = staged.stat().st_size / (1024 * 1024)
-        _record(con, item_key, title, source, path, str(out_path), "ok", len(text), round(size_mb, 2), None)
-        n_ok += 1
-
     for source, items in to_fetch_by_source.items():
         upload_dir = config.UPLOAD_DIR / _safe_dirname(source)
         upload_dir.mkdir(parents=True, exist_ok=True)
@@ -378,50 +413,58 @@ def run(max_docs=None, status_only=False, log=print):
             if not staged.exists():
                 _record(con, item_key, title, source, path, None, "fetch_failed", None, None,
                         "not present after bulk rclone copy")
-                n_fetch_failed += 1
+                counts.fetch_failed += 1
                 continue
             size_mb = staged.stat().st_size / (1024 * 1024)
             if size_mb > config.MAX_SINGLE_FILE_MB:
                 _record(con, item_key, title, source, path, None, "too_large", None, round(size_mb, 2),
                         f"{size_mb:.0f} MB exceeds MAX_SINGLE_FILE_MB={config.MAX_SINGLE_FILE_MB}")
-                n_too_large += 1
+                counts.too_large += 1
                 continue
-            if (filetype or "").lower() in config.SOFFICE_FILETYPES:
-                soffice_queue.append((item_key, staged, ext_for(path), source, upload_dir, (filetype or "").lower()))
+            ft = (filetype or "").lower()
+            if ft in config.SOFFICE_FILETYPES:
+                soffice_queue.append((item_key, staged, ext_for(path), source, upload_dir, ft))
                 continue
             text, err = extract_text(staged, filetype)
             if err:
                 _record(con, item_key, title, source, path, None, "convert_failed", None, round(size_mb, 2), err)
-                n_convert_failed += 1
+                counts.convert_failed += 1
                 continue
             if not text.strip():
                 _record(con, item_key, title, source, path, None, "empty_extraction", 0, round(size_mb, 2),
                         "no text extracted (likely scanned, no OCR)")
-                n_convert_failed += 1
+                counts.convert_failed += 1
                 continue
-            finalize_ok(item_key, title, source, path, text, staged, upload_dir)
+            _finalize_ok(con, counts, item_key, title, source, path, text, staged, upload_dir)
+            sources_uploaded.add(source)
+    return soffice_queue, sources_uploaded
 
-    if soffice_queue:
-        log(f"  batch-converting {len(soffice_queue)} legacy doc/ppt/xls file(s) via soffice...")
-        soffice_results = convert_batch_soffice([(k, s, e, ft) for k, s, e, _s, _u, ft in soffice_queue])
-        for item_key, staged, _ext, source, upload_dir, _ft in soffice_queue:
-            title, path, _source, _filetype = item_meta[item_key]
-            text, err = soffice_results.get(item_key, (None, "no result"))
-            if err:
-                _record(con, item_key, title, source, path, None, "convert_failed", None, None, err)
-                n_convert_failed += 1
-            elif not text.strip():
-                _record(con, item_key, title, source, path, None, "empty_extraction", 0, None, "no text extracted")
-                n_convert_failed += 1
-            else:
-                finalize_ok(item_key, title, source, path, text, staged, upload_dir)
 
-    log(f"  bulk-uploading converted docs back to cloud ({len(sources_uploaded)} source(s))...")
-    upload_results = bulk_upload(sources_uploaded)
+def _convert_soffice_queue(con, soffice_queue, item_meta, counts: BatchCounts, sources_uploaded: Set[str], log: Log):
+    """Batch-convert queued legacy doc/ppt/xls files and record each outcome."""
+    log(f"  batch-converting {len(soffice_queue)} legacy doc/ppt/xls file(s) via soffice...")
+    soffice_results = convert_batch_soffice([(k, s, e, ft) for k, s, e, _s, _u, ft in soffice_queue])
+    for item_key, staged, _ext, source, upload_dir, _ft in soffice_queue:
+        title, path, _source, _filetype = item_meta[item_key]
+        text, err = soffice_results.get(item_key, (None, "no result"))
+        if err:
+            _record(con, item_key, title, source, path, None, "convert_failed", None, None, err)
+            counts.convert_failed += 1
+        elif not text.strip():
+            _record(con, item_key, title, source, path, None, "empty_extraction", 0, None, "no text extracted")
+            counts.convert_failed += 1
+        else:
+            _finalize_ok(con, counts, item_key, title, source, path, text, staged, upload_dir)
+            sources_uploaded.add(source)
+
+
+def _apply_cloud_status(con, sources_uploaded: Set[str], upload_results: Dict[str, bool], counts: BatchCounts):
+    """Mark freshly converted rows cloud_status ok/failed per their source's upload result."""
     for source in sources_uploaded:
         ok_upload = upload_results.get(source, False)
         rows = con.execute(
-            "select item_key, title, catalog_path from fulltext_md where source=? and status='ok' and cloud_status is null",
+            "select item_key, title, catalog_path from fulltext_md "
+            "where source=? and status='ok' and cloud_status is null",
             [source],
         ).fetchall()
         for item_key, title, catalog_path in rows:
@@ -434,14 +477,55 @@ def run(max_docs=None, status_only=False, log=print):
                 )
             else:
                 con.execute("update fulltext_md set cloud_status='failed' where item_key=?", [item_key])
-                n_cloud_failed += 1
+                counts.cloud_failed += 1
+
+
+def run(max_docs=None, status_only=False, log: Log = print):
+    """Convert one capped batch of pending documents; return {"converted", "remaining"}
+    (or the status summary dict when status_only)."""
+    config.ensure_dirs()
+    max_docs = max_docs or config.MAX_DOCS_PER_RUN
+    con = connect()
+
+    if status_only:
+        return _log_status(con, log)
+
+    free_gb = shutil.disk_usage(config.DATA_DIR).free / (1024 ** 3)
+    if free_gb < config.DISK_SAFETY_MARGIN_GB:
+        log(f"disk safety margin hit (<{config.DISK_SAFETY_MARGIN_GB} GB free); stopping.")
+        con.close()
+        return
+
+    retry_cloud_failures(con, log=log)
+
+    pending, total_pending = _select_pending(con, max_docs)
+    log(f"→ {total_pending} document(s) pending. This batch: {len(pending)} docs.")
 
     shutil.rmtree(config.FETCH_DIR, ignore_errors=True)
     shutil.rmtree(config.UPLOAD_DIR, ignore_errors=True)
 
-    remaining = total_pending - n_ok - n_archive_gone - n_unsupported - n_fetch_failed - n_convert_failed - n_too_large
-    log(f"✓ batch complete: {n_ok} converted ({n_ok - n_cloud_failed} cloud-copied), "
-        f"{n_archive_gone} archive-not-persisted, {n_fetch_failed} fetch failed, "
-        f"{n_convert_failed} convert failed, {n_too_large} too large. {remaining} still pending.")
+    counts = BatchCounts()
+    to_fetch_by_source, item_meta = _partition_pending(con, pending, counts)
+
+    log(f"  bulk-fetching {sum(len(v) for v in to_fetch_by_source.values())} file(s) "
+        f"across {len(to_fetch_by_source)} source(s)...")
+    bulk_fetch(to_fetch_by_source)
+
+    soffice_queue, sources_uploaded = _convert_fetched(con, to_fetch_by_source, item_meta, counts)
+    if soffice_queue:
+        _convert_soffice_queue(con, soffice_queue, item_meta, counts, sources_uploaded, log)
+
+    log(f"  bulk-uploading converted docs back to cloud ({len(sources_uploaded)} source(s))...")
+    upload_results = bulk_upload(sources_uploaded)
+    _apply_cloud_status(con, sources_uploaded, upload_results, counts)
+
+    shutil.rmtree(config.FETCH_DIR, ignore_errors=True)
+    shutil.rmtree(config.UPLOAD_DIR, ignore_errors=True)
+
+    remaining = (total_pending - counts.ok - counts.archive_gone - counts.fetch_failed
+                 - counts.convert_failed - counts.too_large)
+    log(f"✓ batch complete: {counts.ok} converted ({counts.ok - counts.cloud_failed} cloud-copied), "
+        f"{counts.archive_gone} archive-not-persisted, {counts.fetch_failed} fetch failed, "
+        f"{counts.convert_failed} convert failed, {counts.too_large} too large. {remaining} still pending.")
     con.close()
-    return {"converted": n_ok, "remaining": remaining}
+    return {"converted": counts.ok, "remaining": remaining}
