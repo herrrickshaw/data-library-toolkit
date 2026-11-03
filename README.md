@@ -21,7 +21,7 @@ New to the repo? See [How to use this repo with AI](HOW_TO_USE_WITH_AI.md).
 ```bash
 git clone https://github.com/herrrickshaw/data-library-toolkit.git
 cd data-library-toolkit
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate   # Python 3.10+ (pyzotero requires it)
 pip install -r requirements.txt      # or: pip install -e .   (installs a `dlt` command)
 rclone config                        # set up the remotes you will discover from
 cp .env.example .env                 # then export/edit DLT_RCLONE_REMOTES etc.

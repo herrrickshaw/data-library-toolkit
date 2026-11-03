@@ -2,7 +2,7 @@
 name = "data-library-toolkit"
 version = "0.1.0"
 description = "Catalog, convert and analyze a large pile of documents (rclone remotes / Zotero) as searchable markdown"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "duckdb>=1.0",
     "pymupdf>=1.24",
@@ -27,8 +27,8 @@ filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "BLE", "UP"]
-ignore = ["UP006", "UP007", "UP035", "UP045"]  # keep typing.* spellings: Python 3.9 compatible
+ignore = ["UP006", "UP007", "UP035", "UP045"]  # keep typing.* spellings: Python 3.10 compatible
