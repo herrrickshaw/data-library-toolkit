@@ -1,0 +1,100 @@
+{
+ "db": [
+  [
+   "K0",
+   "bad.docx",
+   "local:",
+   false,
+   "convert_failed",
+   null,
+   "docx extraction error: Package not found at '<TMP>/files/bad.docx'",
+   null
+  ],
+  [
+   "K1",
+   "blank.pdf",
+   "local:",
+   false,
+   "convert_failed",
+   null,
+   "pdf extraction error: Cannot open empty file: filename='<TMP>/files/blank.pdf'.",
+   null
+  ],
+  [
+   "K2",
+   "four.pdf",
+   "local:",
+   true,
+   "ok",
+   10,
+   null,
+   "ok"
+  ],
+  [
+   "K3",
+   "one.docx",
+   "local:",
+   true,
+   "ok",
+   17,
+   null,
+   "ok"
+  ],
+  [
+   "K4",
+   "three.pptx",
+   "local:",
+   true,
+   "ok",
+   22,
+   null,
+   "ok"
+  ],
+  [
+   "K5",
+   "two.xlsx",
+   "local:",
+   true,
+   "ok",
+   23,
+   null,
+   "ok"
+  ],
+  [
+   "KARC",
+   "inner.pdf",
+   "local:",
+   false,
+   "archive_not_persisted",
+   null,
+   "path is inside an archive not persisted at discovery time",
+   null
+  ],
+  [
+   "KGONE",
+   "gone.pdf",
+   "local:",
+   false,
+   "fetch_failed",
+   null,
+   "not present after bulk rclone copy",
+   null
+  ]
+ ],
+ "logs": [
+  "\u2192 8 document(s) pending. This batch: 8 docs.",
+  "  bulk-fetching 7 file(s) across 1 source(s)...",
+  "  bulk-uploading converted docs back to cloud (1 source(s))...",
+  "\u2713 batch complete: 4 converted (4 cloud-copied), 1 archive-not-persisted, 1 fetch failed, 2 convert failed, 0 too large. 0 still pending."
+ ],
+ "md": {
+  "K2_four.md": "Hello pdf\n",
+  "K3_one.md": "Hello docx\n\na | b",
+  "K4_three.md": "## Slide 1\nSlide title",
+  "K5_two.md": "## Sheet: S1\nx | 1\ny | "
+ },
+ "result": {
+  "converted": 4,
+  "remaining": 0
+ }
+}

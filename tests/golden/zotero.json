@@ -1,0 +1,62 @@
+{
+ "colls": [
+  [
+   "AAA",
+   "C1",
+   "Coll One"
+  ]
+ ],
+ "docs": [
+  [
+   "AAA",
+   "Paper A",
+   "/zstore/AT1/a.pdf",
+   "local:",
+   "zotero",
+   "Coll One",
+   "pdf",
+   "2021",
+   "AAA"
+  ],
+  [
+   "BBB",
+   "b.DOCX",
+   "/x/b.DOCX",
+   "local:",
+   "zotero",
+   "book",
+   "docx",
+   null,
+   "BBB"
+  ],
+  [
+   "CCC",
+   "x",
+   "p",
+   "dropbox:",
+   "c",
+   "t",
+   "pdf",
+   null,
+   "CCC"
+  ]
+ ],
+ "linked": 3,
+ "logs": [
+  "Zotero library has 4 top-level item(s)",
+  "added 2 new document(s) from Zotero, 2 tag row(s), 1 collection membership row(s)",
+  "3 of 3 catalogued item_key(s) match a real Zotero item",
+  "enriched 3 document(s) with 2 tag row(s)"
+ ],
+ "n": 2,
+ "tags": [
+  [
+   "AAA",
+   "ml"
+  ],
+  [
+   "AAA",
+   "stats"
+  ]
+ ]
+}

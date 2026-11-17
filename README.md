@@ -1,112 +1,103 @@
 # data-library-toolkit
 
-<!-- how-to-use-with-ai -->
-> **New here?** See [How to use this repo with AI (Claude, Gemini, ChatGPT)](HOW_TO_USE_WITH_AI.md) — clone it, paste it into an AI tool, and ask in plain English.
+Turns a large, unsorted pile of documents spread across cloud storage (any rclone remote) and/or a Zotero
+library into a full-text-searchable markdown corpus, tracked in a small DuckDB catalog. It produces one `.md`
+file per document (copied back next to the original in the cloud, create-only), a `documents` / `fulltext_md`
+catalog at `data/catalog.duckdb`, and a markdown insights report at `data/ANALYSIS.md`.
 
+> Status: maintained, personal tool published as-is. No licence file yet — all rights reserved. Built from a
+> real Dropbox/Google Drive backfill; the failure modes it works around are documented in the code.
 
-Turn a large, unsorted pile of documents across cloud storage (and/or a
-Zotero library) into an easy-to-access, full-text-searchable markdown
-dataset, tracked in a small DuckDB catalog.
+New to the repo? See [How to use this repo with AI](HOW_TO_USE_WITH_AI.md).
 
-Three stages, each independently runnable and resumable:
+## What it does
+- **Discover** documents (pdf, docx, pptx, doc, ppt, xlsx, xls, epub, mobi, djvu, chm, ris, html, htm) on one or more rclone remotes, with a resumable checkpoint file.
+- **Pull from Zotero** (`zotero-discover`) using its local API, keeping Zotero item keys, tags and collections; `zotero-link` backfills them onto already-catalogued items.
+- **Convert** pending documents to markdown in capped, resumable batches (bulk `rclone copy --files-from`, in-process extraction, one batched `soffice` call for legacy Office).
+- **Copy back** each `.md` (and the source file) to `<remote><DLT_CLOUD_DEST_FOLDER>/` — create-only, never touches the original.
+- **Analyze**: report by status, filetype, category, source, plus top Zotero tags/collections.
 
-1. **Discover** — scan one or more rclone remotes (Dropbox, Google Drive,
-   S3, ...) and/or a running Zotero library, and catalog every document
-   found (pdf, docx, pptx, doc, ppt, xlsx, xls, epub, mobi, djvu, chm, ris,
-   html) into a DuckDB table. Nothing is downloaded or converted at this
-   stage — just discovered and recorded.
-2. **Convert** — turn every catalogued, not-yet-converted document into a
-   standalone `.md` file, batched for speed, and copy each result back to
-   the cloud alongside its source (Create-only — never touches or deletes
-   the original).
-3. **Analyze** — join the catalog against conversion results and (if
-   linked) Zotero tags/collections, and write a markdown report.
-
-## Why this exists
-
-Built from a real backfill: a personal Dropbox/Google Drive account with
-years of accumulated documents, most never catalogued anywhere. The
-architecture here reflects several hard-earned lessons from that process
-(each documented at the point in the code where it matters):
-
-- **A flat recursive listing of a whole cloud account can itself time out**
-  before producing any output — `discover.py` uses recursive subdivision
-  (list top-level, recurse into what's too big to list in one call) instead.
-- **Batched I/O beats one-file-at-a-time by ~10x**: one `rclone copy
-  --files-from=<list>` per batch instead of a `copyto` per file, in-process
-  extraction (PyMuPDF/python-docx/python-pptx/openpyxl) instead of shelling
-  out to a converter subprocess per file.
-- **Legacy binary Office (.doc/.ppt/.xls) has no good pure-Python library**
-  — these go through one batched `soffice --headless` call, with the export
-  filter chosen per document type (a Writer filter against a Calc document
-  silently produces nothing).
-- **Every subprocess call with a timeout needs a try/except around it** —
-  an uncaught `TimeoutExpired` crashes the whole batch; this cost real time
-  repeatedly before every call site was audited.
-- **A live-queried SQLite index shouldn't be cloud-mounted** — if you back
-  up a resulting search index (e.g. via a tool like `qmd`) to cloud
-  storage, snapshot it with `sqlite3 .backup` first and archive many small
-  files into one compressed tarball before uploading, rather than syncing
-  a folder of thousands of files (hits cloud API rate limits fast).
-
-## Setup
-
+## Quick start
 ```bash
-pip install -r requirements.txt
-rclone config          # set up whichever remotes you'll discover from
-cp .env.example .env   # edit DLT_RCLONE_REMOTES, DLT_CLOUD_DEST_FOLDER, etc.
+git clone https://github.com/herrrickshaw/data-library-toolkit.git
+cd data-library-toolkit
+python -m venv .venv && source .venv/bin/activate   # Python 3.10+ (pyzotero requires it)
+pip install -r requirements.txt      # or: pip install -e .   (installs a `dlt` command)
+rclone config                        # set up the remotes you will discover from
+cp .env.example .env                 # then export/edit DLT_RCLONE_REMOTES etc.
+python -m dlt.cli discover && python -m dlt.cli convert --loop
 ```
-
 Optional, for full filetype coverage:
 ```bash
 pipx install markitdown && pipx inject markitdown 'markitdown[pdf]'   # mobi/djvu/chm/ris/html fallback
-brew install --cask libreoffice   # legacy .doc/.ppt/.xls
+brew install --cask libreoffice                                       # legacy .doc/.ppt/.xls
 ```
-
-## Usage
-
+Other commands:
 ```bash
-python -m dlt.cli discover              # scan configured remotes, catalog new documents
-python -m dlt.cli zotero-discover       # (optional) also pull from a running Zotero library
-python -m dlt.cli zotero-link           # (optional) backfill tags/collections for matching items
-python -m dlt.cli convert --loop        # convert everything pending, in capped batches
-python -m dlt.cli status                # progress summary
-python -m dlt.cli analyze               # write data/ANALYSIS.md
+python -m dlt.cli zotero-discover   # (optional) add items from a running Zotero
+python -m dlt.cli zotero-link       # (optional) backfill tags/collections for matching items
+python -m dlt.cli status            # progress summary
+python -m dlt.cli analyze [--out PATH]   # writes data/ANALYSIS.md
 ```
+`convert` is fully resumable (checkpointed in the catalog); run it as a scheduled/background job for large backfills.
 
-For a large backfill, run `convert` as a scheduled/backgrounded job rather
-than in one sitting — it's fully resumable (checkpointed in the catalog
-itself; killing it mid-batch costs nothing).
+## How it works
+| Stage | Module | Output |
+|---|---|---|
+| Discover | `dlt/discover.py` | rows in `documents`; `data/discover_checkpoint.jsonl` |
+| Zotero index | `dlt/zotero_index.py` | `documents` rows with Zotero keys; `zotero_tags`, `zotero_collections` |
+| Convert | `dlt/convert.py` | `data/md_corpus/<key>_<title>.md`; rows in `fulltext_md`; cloud copy-back |
+| Analyze | `dlt/analyze.py` | `data/ANALYSIS.md` |
+| Catalog / config / CLI | `dlt/catalog.py`, `dlt/config.py`, `dlt/cli.py` | schema, env-driven settings, sub-commands |
 
-## Using Zotero as an index
+Design decisions (each earned from a real failure):
+- **Recursive subdivision for discovery.** A flat recursive listing of a whole cloud account can itself time out; `discover.py` lists a folder, and if that times out, lists its subfolders and recurses (up to `DLT_DISCOVERY_MAX_DEPTH`).
+- **Batched I/O.** One `rclone copy --files-from` per batch instead of a `copyto` per file (~10x faster); in-process extraction (PyMuPDF, python-docx, python-pptx, openpyxl) instead of a subprocess per file. Extractors live in the `EXTRACTORS` dict in `convert.py`.
+- **Legacy .doc/.ppt/.xls** have no good pure-Python library: they go through one batched `soffice --headless` call, with the export filter chosen per type (a Writer filter on a Calc file silently yields nothing).
+- **Every subprocess with a timeout handles `TimeoutExpired`** (now logged); an uncaught timeout used to crash a whole batch.
+- **Copy-back status is tracked separately** (`cloud_status`), so a failed upload self-heals on the next run without re-converting.
+- **Don't cloud-mount a live SQLite index.** If you back up a search index (e.g. via `qmd`), snapshot it with `sqlite3 .backup` and upload one compressed tarball rather than thousands of small files.
+- **DuckDB single-writer:** `connect()` waits through a transient writer lock (up to 4 h) instead of crashing.
 
-If you run Zotero locally (Settings → Advanced → "Allow other applications
-on this computer to communicate with Zotero"), `zotero-discover` adds every
-item with a file attachment straight from your library — using Zotero's own
-item key, tags, and collection membership as the catalog's `category`/
-`topic`/`zotero_tags` fields. `zotero-link` does the reverse: for documents
-already catalogued some other way, backfill Zotero metadata wherever the
-item happens to share a real Zotero item key.
-
-Caveat: this only sees the *currently open* Zotero library. If your catalog
-was built from a different Zotero session or a snapshot taken elsewhere,
-the item keys won't overlap — `zotero-link` will report near-zero matches
-rather than silently linking the wrong things.
+## Repository layout
+| Path | Purpose |
+|---|---|
+| `dlt/` | the package (modules above) |
+| `tests/` | pytest suite; `tests/golden/` holds outputs captured from the pre-refactor code |
+| `.env.example` | every `DLT_*` setting with comments |
+| `data/` | generated at runtime (catalog, markdown corpus, staging); gitignored |
+| `HOW_TO_USE_WITH_AI.md`, `CLAUDE.md` | AI-assistant guidance |
 
 ## Schema
+`data/catalog.duckdb`:
+- `documents` — one row per file: `item_key`, `title`, `path` (relative to `source`), `source` (rclone prefix, or `local:` for a Zotero-resolved path), `category`, `topic`, `filetype`, `year`, `md5`, `is_duplicate`, `duplicate_of`, `mtime`, `date_added`, `zotero_key`.
+- `fulltext_md` — one row per conversion attempt: `status` (`ok`, `convert_failed`, `empty_extraction`, `fetch_failed`, `too_large`, `archive_not_persisted`), `chars`, `md_path`, `cloud_status`, `cloud_pdf_path`, `cloud_md_path`, `error`.
+- `zotero_tags`, `zotero_collections` once Zotero-linked.
 
-Two tables in the DuckDB catalog (`data/catalog.duckdb` by default):
+## Data sources
+| Source | What is taken | Access route | Caveat |
+|---|---|---|---|
+| rclone remotes (Dropbox, Drive, S3, ...) | file listings and the documents themselves | `rclone` CLI, your own `rclone config` | read-only on the source; copy-back is create-only |
+| Zotero desktop (local API) | items with file attachments, tags, collections | `pyzotero`, local mode (Settings → Advanced → allow other applications) | only the *currently open* library is visible; with a mismatched library `zotero-link` reports near-zero matches |
 
-- `documents` — one row per discovered file: `item_key`, `title`, `path`
-  (relative to its `source` remote), `source` (an rclone remote prefix, or
-  `local:` for a Zotero-resolved local path), `category`, `topic`,
-  `filetype`, `zotero_key`.
-- `fulltext_md` — one row per conversion attempt: `status` (`ok` /
-  `convert_failed` / `empty_extraction` / `fetch_failed` / ...), `chars`,
-  `md_path`, `cloud_status`.
+## Configuration
+Environment variables (see `.env.example`); no secrets are required or committed.
+`DLT_DATA_DIR` (`./data`), `DLT_RCLONE_REMOTES` (`dropbox:`), `DLT_CLOUD_DEST_FOLDER` (`dlt_md_corpus`, empty disables copy-back), `DLT_SKIP_FOLDERS`, `DLT_ZOTERO_LOCAL` (`1`), `DLT_ZOTERO_LIBRARY_ID`, `DLT_ZOTERO_LIBRARY_TYPE`, `DLT_ZOTERO_API_KEY` (only for web-API mode — keep in your environment, never in git), `DLT_MAX_DOCS_PER_RUN` (1000), `DLT_MAX_SINGLE_FILE_MB` (300), `DLT_DISK_SAFETY_MARGIN_GB` (5). Further tuning keys (timeouts, rclone transfers, binary paths) are in `dlt/config.py`.
+Note that `.env` is not auto-loaded; export the variables or use `set -a; source .env; set +a`.
 
-Plus, once Zotero-linked: `zotero_tags`, `zotero_collections`.
+## Testing
+```bash
+pip install pytest ruff
+pytest -q          # 9 tests, no network, no rclone/soffice needed (fake rclone + fake Zotero client)
+ruff check dlt tests
+```
 
-## License
+## Limitations and known issues
+- Scanned PDFs are not OCR'd; they are recorded as `empty_extraction`.
+- Files inside archives (path containing `!`) are recorded as `archive_not_persisted`.
+- `analyze` report quirks kept for output stability: the "Processed" row lacks its closing `|`, and a blank line appears when no document converted.
+- The batch log reports "cloud-copied" counts even when copy-back is disabled.
+- Text extraction for non-fast-path types needs `markitdown` and `soffice` installed separately.
 
-Private tool for personal use. Add a license before making this public.
+## Licence
+No licence file yet — all rights reserved.

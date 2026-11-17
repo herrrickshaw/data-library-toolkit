@@ -1,0 +1,149 @@
+{
+ "archives": [
+  {
+   "path": "docs/bak.zip",
+   "source": "fake:"
+  }
+ ],
+ "docs": [
+  [
+   "AUTO_634c87063839",
+   "y.DOCX",
+   "docs/sub/y.DOCX",
+   "fake:",
+   "uncategorized",
+   "docs",
+   "docx",
+   1706933106000
+  ],
+  [
+   "AUTO_a3cabdbc0c21",
+   "x.pdf",
+   "docs/x.pdf",
+   "fake:",
+   "uncategorized",
+   "docs",
+   "pdf",
+   1704164645000
+  ],
+  [
+   "AUTO_60ce8b5744e8",
+   "p.pptx",
+   "slow/a/p.pptx",
+   "fake:",
+   "uncategorized",
+   "slow",
+   "pptx",
+   null
+  ],
+  [
+   "AUTO_6d79f81a846e",
+   "q.xls",
+   "slow/b/q.xls",
+   "fake:",
+   "uncategorized",
+   "slow",
+   "xls",
+   1683356889000
+  ],
+  [
+   "AUTO_209893056818",
+   "top.epub",
+   "top.epub",
+   "fake:",
+   "uncategorized",
+   "(root)",
+   "epub",
+   1640995200000
+  ]
+ ],
+ "found": [
+  [
+   "fake:",
+   "docs/sub/y.DOCX",
+   "20",
+   "2024-02-03 04:05:06"
+  ],
+  [
+   "fake:",
+   "docs/x.pdf",
+   "10",
+   "2024-01-02 03:04:05"
+  ],
+  [
+   "fake:",
+   "slow/a/p.pptx",
+   "1",
+   "bad-date"
+  ],
+  [
+   "fake:",
+   "slow/b/q.xls",
+   "2",
+   "2023-05-06 07:08:09"
+  ],
+  [
+   "fake:",
+   "top.epub",
+   "3",
+   "2022-01-01 00:00:00"
+  ]
+ ],
+ "inserted": [
+  5,
+  0
+ ],
+ "logs": [
+  "=== sweeping fake: ===",
+  "3 top-level folder(s)",
+  "skip fake:skipme (configured skip list)",
+  "\nscan complete: 5 document file(s), 1 archive(s), 0 folder(s) skipped.",
+  "catalog has 0 path(s); 5 new of 5 found",
+  "inserted 5 new row(s) (0 -> 5)",
+  "catalog has 5 path(s); 0 new of 5 found",
+  "wrote <TMP>/data/ANALYSIS.md"
+ ],
+ "report": [
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "# Content analysis",
+  "## By category",
+  "## By conversion status",
+  "## By filetype",
+  "## By source",
+  "## Overview",
+  "| Catalogued documents | 5 |",
+  "| Category | Count |",
+  "| Converted to markdown | 0 |",
+  "| Filetype | Total | Converted OK |",
+  "| Linked to a Zotero item | 0 |",
+  "| Near-empty extractions (<200 chars, likely scanned/no OCR) | 0 |",
+  "| Processed | 0 (0.0%)",
+  "| Source | Count |",
+  "| Status | Count |",
+  "| docx | 1 | 0 |",
+  "| epub | 1 | 0 |",
+  "| fake: | 5 |",
+  "| pdf | 1 | 0 |",
+  "| pptx | 1 | 0 |",
+  "| uncategorized | 5 |",
+  "| xls | 1 | 0 |",
+  "| | |",
+  "|---|---|",
+  "|---|---|",
+  "|---|---|",
+  "|---|---|",
+  "|---|---|---|"
+ ],
+ "skipped": []
+}
