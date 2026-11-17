@@ -94,6 +94,18 @@ def walk(remote_root, folder_path, depth, found, archives, skipped, source=None)
             skipped.append({"path": target, "reason": "no subfolders but still times out"})
         return
 
+    # Files sitting directly in this folder are not inside any subfolder, so the
+    # recursion below never sees them: list them with a cheap non-recursive call.
+    loose = _run(
+        [config.RCLONE_BIN, "lsf", target, "--files-only", "--format", "pst", "--separator", "\t"],
+        60,
+    )
+    if loose is not None and loose.returncode == 0:
+        rows = [tuple(l.split("\t")) for l in loose.stdout.splitlines() if len(l.split("\t")) == 3]
+        _extract(rows, folder_path, found, archives, source)
+    else:
+        skipped.append({"path": target, "reason": "could not list files directly in this folder"})
+
     for sub in subfolders:
         sub_path = f"{folder_path}/{sub}" if folder_path else sub
         walk(remote_root, sub_path, depth + 1, found, archives, skipped, source)
@@ -187,9 +199,11 @@ def scan(remotes=None, fresh=False, log=print):
 
 def insert_new(con, found, categorize_fn=None, dry_run=False, log=print):
     """categorize_fn(path) -> (category, topic); defaults to ('uncategorized', top-level folder)."""
-    existing_paths = {r[0] for r in con.execute("select path from documents").fetchall()}
-    new_rows = [(s, p, sz, mt) for s, p, sz, mt in found if p not in existing_paths]
-    log(f"catalog has {len(existing_paths)} path(s); {len(new_rows)} new of {len(found)} found")
+    # Dedup per (source, path): the same relative path on two remotes is two documents
+    # (item_key_for() already includes the source).
+    existing = {(r[0], r[1]) for r in con.execute("select source, path from documents").fetchall()}
+    new_rows = [(s, p, sz, mt) for s, p, sz, mt in found if (s, p) not in existing]
+    log(f"catalog has {len(existing)} path(s); {len(new_rows)} new of {len(found)} found")
     if not new_rows:
         return 0
 
