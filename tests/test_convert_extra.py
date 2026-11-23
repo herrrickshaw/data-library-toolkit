@@ -450,3 +450,82 @@ def test_checkpoint_roundtrip_and_corrupt_lines(cfg, monkeypatch, tmp_path):
     done, found, archives, skipped = discover._load_checkpoint()
     assert done == {("r:", "f")} and found == [("r:", "p.pdf", "1", "t")]
     assert archives == [{"a": 1}] and skipped == [{"path": "x"}]
+
+
+# =============================== mutation-driven additions ===============================
+
+def test_markitdown_error_keeps_the_tail_of_stderr(monkeypatch, tmp_path):
+    f = tmp_path / "x.mobi"
+    f.write_bytes(b"x")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: cp(1, "", "a" * 100 + "b" * 500))
+    assert convert.extract_text(f, "mobi") == (None, "b" * 500)
+
+
+def test_extraction_error_keeps_the_tail_of_the_message(monkeypatch, tmp_path):
+    def boom(path):
+        raise ValueError("a" * 100 + "b" * 400)
+
+    monkeypatch.setitem(convert.EXTRACTORS, "docx", boom)
+    assert convert.extract_text(tmp_path / "x.docx", "docx") == (None, "docx extraction error: " + "b" * 400)
+
+
+def test_soffice_default_filter_reads_txt_output(cfg, monkeypatch, tmp_path):
+    f = tmp_path / "a.odt"
+    f.write_text("x")
+
+    def fake_run(cmd, **kw):
+        outdir = Path(cmd[cmd.index("--outdir") + 1])
+        (outdir / "A.txt").write_text("odt text")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert convert.convert_batch_soffice([("A", f, ".odt", "odt")])["A"] == ("odt text", None)
+
+
+def test_bulk_upload_skips_rclone_for_empty_or_missing_staging_dirs(cfg, monkeypatch):
+    (config.UPLOAD_DIR / "empty_").mkdir(parents=True)
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a) or cp(0))
+    assert convert.bulk_upload({"empty:", "missing:"}) == {"empty:": True, "missing:": True}
+    assert calls == []
+
+
+def test_title_and_extension_length_caps():
+    assert len(convert.safe_title_for("t" * 100)) == 80 and convert.safe_title_for("t" * 80) == "t" * 80
+    assert convert.ext_for("a." + "x" * 15) == "." + "x" * 10
+
+
+def test_file_exactly_at_the_size_limit_is_converted(cfg, monkeypatch):
+    import fitz
+    fetch = config.FETCH_DIR / "dropbox_"
+    fetch.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "hello")
+    doc.save(str(fetch / "a.pdf"))
+    doc.close()
+    blob = (fetch / "a.pdf").read_bytes()
+    monkeypatch.setattr(config, "MAX_SINGLE_FILE_MB", len(blob) / (1024 * 1024))     # exactly the limit
+    add("K1", "a.pdf")
+
+    def restage(items):
+        (config.FETCH_DIR / "dropbox_").mkdir(parents=True, exist_ok=True)
+        (config.FETCH_DIR / "dropbox_" / "a.pdf").write_bytes(blob)
+
+    monkeypatch.setattr(convert, "bulk_fetch", restage)
+    monkeypatch.setattr(convert, "bulk_upload", lambda sources: {s: True for s in sources})
+    assert convert.run(log=lambda m: None) == {"converted": 1, "remaining": 0}
+    assert statuses()["K1"] == ("ok", "ok")
+    add("K2", "a.pdf")
+    monkeypatch.setattr(config, "MAX_SINGLE_FILE_MB", len(blob) / (1024 * 1024) - 1e-6)
+    convert.run(log=lambda m: None)
+    assert statuses()["K2"][0] == "too_large"
+
+
+def test_missing_upload_result_counts_as_a_failed_copy_back(cfg):
+    con = catalog.connect()
+    con.execute("insert into fulltext_md values (?,'T','dropbox:','p.pdf','/x.md','ok',5,1.0,now(),"
+                "null,null,null,null)", ["K1"])
+    counts = convert.BatchCounts()
+    convert._apply_cloud_status(con, {"dropbox:"}, {}, counts)
+    assert con.execute("select cloud_status from fulltext_md").fetchone()[0] == "failed"
+    assert counts.cloud_failed == 1
+    con.close()
