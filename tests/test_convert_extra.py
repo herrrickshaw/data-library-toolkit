@@ -259,6 +259,7 @@ def test_run_boundary_of_disk_guard(cfg, monkeypatch):
     monkeypatch.setattr(convert.shutil, "disk_usage",
                         lambda p: types.SimpleNamespace(free=int(2 * 1024 ** 3)))
     monkeypatch.setattr(config, "DISK_SAFETY_MARGIN_GB", 2)
+    monkeypatch.setattr(convert, "bulk_fetch", lambda items: None)           # never shell out to rclone
     assert convert.run(log=lambda m: None) is not None                        # exactly at the margin runs
 
 
