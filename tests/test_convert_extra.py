@@ -529,3 +529,10 @@ def test_missing_upload_result_counts_as_a_failed_copy_back(cfg):
     assert con.execute("select cloud_status from fulltext_md").fetchone()[0] == "failed"
     assert counts.cloud_failed == 1
     con.close()
+
+
+def test_insert_new_stores_mtime_in_milliseconds(cfg):
+    con = catalog.connect()
+    discover.insert_new(con, [("a:", "x/y.pdf", "1", "2024-01-01 00:00:00")], log=lambda m: None)
+    assert con.execute("select mtime from documents").fetchone()[0] == 1_704_067_200_000
+    con.close()
