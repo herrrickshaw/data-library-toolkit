@@ -112,7 +112,7 @@ def walk(remote_root, folder_path, depth, found, archives, skipped, source=None)
         60,
     )
     if loose is not None and loose.returncode == 0:
-        rows = [tuple(l.split("\t")) for l in loose.stdout.splitlines() if len(l.split("\t")) == 3]
+        rows = [tuple(ln.split("\t")) for ln in loose.stdout.splitlines() if len(ln.split("\t")) == 3]
         _extract(rows, folder_path, found, archives, source)
     else:
         skipped.append({"path": target, "reason": "could not list files directly in this folder"})
