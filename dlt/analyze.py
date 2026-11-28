@@ -63,11 +63,10 @@ def render_report(stats: Dict[str, object], generated_at: datetime) -> str:
         "| | |",
         "|---|---|",
         f"| Catalogued documents | {total} |",
-        # NB: the first branch has no closing pipe; kept verbatim to preserve output byte-for-byte.
-        f"| Processed | {done} ({100*done/total:.1f}%)" if total else "| Processed | 0 |",
+        f"| Processed | {done} ({100*done/total:.1f}%) |" if total else "| Processed | 0 |",
         f"| Converted to markdown | {stats['ok']} |",
         f"| Linked to a Zotero item | {stats['zotero_linked']} |",
-        f"| Avg. characters per converted doc | {avg_chars:.0f} |" if avg_chars else "",
+        *([f"| Avg. characters per converted doc | {avg_chars:.0f} |"] if avg_chars else []),
         f"| Near-empty extractions (<200 chars, likely scanned/no OCR) | {stats['near_empty']} |",
         "",
         "## By conversion status",
