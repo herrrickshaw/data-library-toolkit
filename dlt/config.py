@@ -69,6 +69,16 @@ FAST_PATH_FILETYPES = {"pdf", "epub", "docx", "pptx", "xlsx"}
 SOFFICE_FILETYPES = {"doc", "ppt", "xls"}
 
 
+# ── optional extras (both off by default) ────────────────────────────────
+# OCR PDFs that have no text layer. Needs the `ocrmypdf` program; slow.
+OCR_ENABLED = os.environ.get("DLT_OCR", "0") == "1"
+OCRMYPDF_BIN = os.environ.get("DLT_OCRMYPDF_BIN", "ocrmypdf")
+OCR_LANG = os.environ.get("DLT_OCR_LANG", "eng")
+OCR_TIMEOUT_S = int(os.environ.get("DLT_OCR_TIMEOUT_S", "900"))
+# Convert catalogued "archive.zip!inner/file.pdf" entries. Downloads the whole archive.
+CONVERT_ARCHIVE_MEMBERS = os.environ.get("DLT_CONVERT_ARCHIVE_MEMBERS", "0") == "1"
+
+
 def ensure_dirs():
     for d in (DATA_DIR, MD_OUTPUT_DIR, STAGE_DIR):
         d.mkdir(parents=True, exist_ok=True)
