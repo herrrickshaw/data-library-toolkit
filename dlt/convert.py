@@ -298,6 +298,8 @@ def _record(con, item_key, title, source, catalog_path, md_path, status, chars, 
 
 def retry_cloud_failures(con, limit=200, log: Log = print) -> None:
     """Re-upload converted files whose cloud copy-back failed or never ran."""
+    if not config.CLOUD_DEST_FOLDER:
+        return
     rows = con.execute("""
         select item_key, source, md_path, title
         from fulltext_md where status='ok' and (cloud_status='failed' or cloud_status is null)
@@ -515,16 +517,21 @@ def run(max_docs=None, status_only=False, log: Log = print):
     if soffice_queue:
         _convert_soffice_queue(con, soffice_queue, item_meta, counts, sources_uploaded, log)
 
-    log(f"  bulk-uploading converted docs back to cloud ({len(sources_uploaded)} source(s))...")
-    upload_results = bulk_upload(sources_uploaded)
-    _apply_cloud_status(con, sources_uploaded, upload_results, counts)
+    # With copy-back disabled nothing is uploaded, so cloud_status stays null:
+    # no invented cloud paths, and enabling it later picks these rows up.
+    if config.CLOUD_DEST_FOLDER:
+        log(f"  bulk-uploading converted docs back to cloud ({len(sources_uploaded)} source(s))...")
+        upload_results = bulk_upload(sources_uploaded)
+        _apply_cloud_status(con, sources_uploaded, upload_results, counts)
 
     shutil.rmtree(config.FETCH_DIR, ignore_errors=True)
     shutil.rmtree(config.UPLOAD_DIR, ignore_errors=True)
 
     remaining = (total_pending - counts.ok - counts.archive_gone - counts.fetch_failed
                  - counts.convert_failed - counts.too_large)
-    log(f"✓ batch complete: {counts.ok} converted ({counts.ok - counts.cloud_failed} cloud-copied), "
+    copy_note = (f"{counts.ok - counts.cloud_failed} cloud-copied" if config.CLOUD_DEST_FOLDER
+                 else "cloud copy-back disabled")
+    log(f"✓ batch complete: {counts.ok} converted ({copy_note}), "
         f"{counts.archive_gone} archive-not-persisted, {counts.fetch_failed} fetch failed, "
         f"{counts.convert_failed} convert failed, {counts.too_large} too large. {remaining} still pending.")
     con.close()

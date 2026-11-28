@@ -28,7 +28,7 @@
    "ok",
    10,
    null,
-   "ok"
+   null
   ],
   [
    "K3",
@@ -38,7 +38,7 @@
    "ok",
    17,
    null,
-   "ok"
+   null
   ],
   [
    "K4",
@@ -48,7 +48,7 @@
    "ok",
    22,
    null,
-   "ok"
+   null
   ],
   [
    "K5",
@@ -58,7 +58,7 @@
    "ok",
    23,
    null,
-   "ok"
+   null
   ],
   [
    "KARC",
@@ -84,8 +84,7 @@
  "logs": [
   "\u2192 8 document(s) pending. This batch: 8 docs.",
   "  bulk-fetching 7 file(s) across 1 source(s)...",
-  "  bulk-uploading converted docs back to cloud (1 source(s))...",
-  "\u2713 batch complete: 4 converted (4 cloud-copied), 1 archive-not-persisted, 1 fetch failed, 2 convert failed, 0 too large. 0 still pending."
+  "\u2713 batch complete: 4 converted (cloud copy-back disabled), 1 archive-not-persisted, 1 fetch failed, 2 convert failed, 0 too large. 0 still pending."
  ],
  "md": {
   "K2_four.md": "Hello pdf\n",

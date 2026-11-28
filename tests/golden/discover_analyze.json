@@ -47,6 +47,16 @@
    1683356889000
   ],
   [
+   "AUTO_980b33a88877",
+   "top.epub",
+   "slow/top.epub",
+   "fake:",
+   "uncategorized",
+   "slow",
+   "epub",
+   1640995200000
+  ],
+  [
    "AUTO_209893056818",
    "top.epub",
    "top.epub",
@@ -84,27 +94,32 @@
   ],
   [
    "fake:",
+   "slow/top.epub",
+   "3",
+   "2022-01-01 00:00:00"
+  ],
+  [
+   "fake:",
    "top.epub",
    "3",
    "2022-01-01 00:00:00"
   ]
  ],
  "inserted": [
-  5,
+  6,
   0
  ],
  "logs": [
   "=== sweeping fake: ===",
   "3 top-level folder(s)",
   "skip fake:skipme (configured skip list)",
-  "\nscan complete: 5 document file(s), 1 archive(s), 0 folder(s) skipped.",
-  "catalog has 0 path(s); 5 new of 5 found",
-  "inserted 5 new row(s) (0 -> 5)",
-  "catalog has 5 path(s); 0 new of 5 found",
+  "\nscan complete: 6 document file(s), 1 archive(s), 0 folder(s) skipped.",
+  "catalog has 0 path(s); 6 new of 6 found",
+  "inserted 6 new row(s) (0 -> 6)",
+  "catalog has 6 path(s); 0 new of 6 found",
   "wrote <TMP>/data/ANALYSIS.md"
  ],
  "report": [
-  "",
   "",
   "",
   "",
@@ -122,21 +137,21 @@
   "## By filetype",
   "## By source",
   "## Overview",
-  "| Catalogued documents | 5 |",
+  "| Catalogued documents | 6 |",
   "| Category | Count |",
   "| Converted to markdown | 0 |",
   "| Filetype | Total | Converted OK |",
   "| Linked to a Zotero item | 0 |",
   "| Near-empty extractions (<200 chars, likely scanned/no OCR) | 0 |",
-  "| Processed | 0 (0.0%)",
+  "| Processed | 0 (0.0%) |",
   "| Source | Count |",
   "| Status | Count |",
   "| docx | 1 | 0 |",
-  "| epub | 1 | 0 |",
-  "| fake: | 5 |",
+  "| epub | 2 | 0 |",
+  "| fake: | 6 |",
   "| pdf | 1 | 0 |",
   "| pptx | 1 | 0 |",
-  "| uncategorized | 5 |",
+  "| uncategorized | 6 |",
   "| xls | 1 | 0 |",
   "| | |",
   "|---|---|",

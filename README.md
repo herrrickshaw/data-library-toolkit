@@ -10,6 +10,35 @@ catalog at `data/catalog.duckdb`, and a markdown insights report at `data/ANALYS
 
 New to the repo? See [How to use this repo with AI](HOW_TO_USE_WITH_AI.md).
 
+## In plain English
+
+*This section is for readers who do not write software.*
+
+**What problem does it solve?** Years of PDFs, Word files, slides and spreadsheets pile up across cloud
+folders, and you cannot search *inside* them all at once. This tool goes through the folders, saves a plain-text
+copy of each document it can read, and keeps an index of what it found.
+
+**What happens, step by step**
+1. **Make a list** of documents in your cloud storage (and, if you wish, your Zotero reference library).
+2. **Convert** them to plain text a batch at a time. If you stop it, it carries on where it left off.
+3. **Copy the text versions back** to your cloud storage, in a separate folder. Your original files are not
+   changed or deleted. You can switch this copying off; the tool then records no cloud copies.
+4. **Report** how many documents were found, converted or could not be read.
+
+**What you get:** a folder of searchable text files, a small database listing them, and a readable summary report.
+
+**What it cannot do**
+- Scanned pages that are only pictures are not turned into text. They are recorded as empty.
+- Files still packed inside zip-style archives are noted but not converted.
+- Converted text can lose layout, especially tables.
+
+**Where does your information go?** Documents are downloaded to your computer and converted there. The tool does
+not send their contents to an AI service. If copy-back is on, copies go to your own cloud storage. Check that
+there is room, and that you are happy for those copies to exist.
+
+**What you need:** Python 3.10 or newer, a free program called rclone connected to your storage, and comfort
+with typing commands. This is a personal tool published as-is.
+
 ## What it does
 - **Discover** documents (pdf, docx, pptx, doc, ppt, xlsx, xls, epub, mobi, djvu, chm, ris, html, htm) on one or more rclone remotes, with a resumable checkpoint file.
 - **Pull from Zotero** (`zotero-discover`) using its local API, keeping Zotero item keys, tags and collections; `zotero-link` backfills them onto already-catalogued items.
@@ -88,15 +117,13 @@ Note that `.env` is not auto-loaded; export the variables or use `set -a; source
 ## Testing
 ```bash
 pip install pytest ruff
-pytest -q          # 9 tests, no network, no rclone/soffice needed (fake rclone + fake Zotero client)
+pytest -q          # 32 tests, no network, no rclone/soffice needed (fake rclone + fake Zotero client)
 ruff check dlt tests
 ```
 
 ## Limitations and known issues
 - Scanned PDFs are not OCR'd; they are recorded as `empty_extraction`.
 - Files inside archives (path containing `!`) are recorded as `archive_not_persisted`.
-- `analyze` report quirks kept for output stability: the "Processed" row lacks its closing `|`, and a blank line appears when no document converted.
-- The batch log reports "cloud-copied" counts even when copy-back is disabled.
 - Text extraction for non-fast-path types needs `markitdown` and `soffice` installed separately.
 
 ## Licence
