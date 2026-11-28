@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import tempfile
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,7 +44,7 @@ import fitz  # PyMuPDF
 import openpyxl
 import pptx as python_pptx
 
-from . import config
+from . import archives, config
 from .catalog import connect, status_summary
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,25 @@ def extract_text(path, filetype) -> Extraction:
         return extractor(path)
     except Exception as e:  # noqa: BLE001 — any real-world file can be malformed
         return None, f"{ft} extraction error: {str(e)[-400:]}"
+
+
+def ocr_pdf(path) -> Extraction:
+    """Text from a picture-only PDF using ocrmypdf's sidecar output."""
+    with tempfile.TemporaryDirectory() as tmp:
+        sidecar, out_pdf = Path(tmp) / "text.txt", Path(tmp) / "out.pdf"
+        try:
+            result = subprocess.run(
+                [config.OCRMYPDF_BIN, "--skip-text", "--output-type", "pdf", "-l", config.OCR_LANG,
+                 "--sidecar", str(sidecar), str(path), str(out_pdf)],
+                capture_output=True, text=True, timeout=config.OCR_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired:
+            return None, f"ocr timeout after {config.OCR_TIMEOUT_S}s"
+        except OSError as e:
+            return None, f"could not run ocrmypdf: {e}"
+        if result.returncode != 0 or not sidecar.exists():
+            return None, "ocr failed: " + (result.stderr or "").strip()[-400:]
+        return sidecar.read_text(errors="replace"), None
 
 
 def convert_batch_soffice(items) -> Dict[str, Extraction]:
@@ -378,13 +398,55 @@ def _partition_pending(con, pending, counts: BatchCounts):
     item_meta = {}
     for item_key, title, path, source, filetype in pending:
         item_meta[item_key] = (title, path, source, filetype)
-        if "!" in path:
+        # "local:" paths are absolute, so staging a member would write beside the user's files.
+        readable = (config.CONVERT_ARCHIVE_MEMBERS and source != "local:"
+                    and archives.split_member_path(path) is not None)
+        # With the option on, a "!" that is only part of a file name is fetched normally.
+        plain_name = (config.CONVERT_ARCHIVE_MEMBERS and source != "local:"
+                      and archives.split_member_path(path) is None)
+        if "!" in path and not readable and not plain_name:
             _record(con, item_key, title, source, path, None, "archive_not_persisted", None, None,
                     "path is inside an archive not persisted at discovery time")
             counts.archive_gone += 1
             continue
         to_fetch_by_source.setdefault(source, []).append((item_key, path))
     return to_fetch_by_source, item_meta
+
+
+def _fetch_list(to_fetch_by_source):
+    """What rclone must download: the outer archive for a member path, else the file itself."""
+    if not config.CONVERT_ARCHIVE_MEMBERS:
+        return to_fetch_by_source
+    wanted = {}
+    for source, items in to_fetch_by_source.items():
+        seen = {}
+        for item_key, path in items:
+            parts = None if source == "local:" else archives.split_member_path(path)
+            seen.setdefault(parts[0] if parts else path, item_key)
+        wanted[source] = [(key, path) for path, key in seen.items()]
+    return wanted
+
+
+def _unpack_members(con, to_fetch_by_source, item_meta, counts: BatchCounts):
+    """Stage each archive member where a normal download would be; drop and record failures."""
+    if not config.CONVERT_ARCHIVE_MEMBERS:
+        return
+    max_bytes = config.MAX_SINGLE_FILE_MB * 1024 * 1024
+    for source, items in to_fetch_by_source.items():
+        if source == "local:":
+            continue
+        root = config.FETCH_DIR / _safe_dirname(source)
+        kept = []
+        for item_key, path in items:
+            parts = archives.split_member_path(path)
+            err = archives.materialize(root / parts[0], parts[1:], root / path, max_bytes) if parts else None
+            if err:
+                title = item_meta[item_key][0]
+                _record(con, item_key, title, source, path, None, "archive_not_persisted", None, None, err)
+                counts.archive_gone += 1
+            else:
+                kept.append((item_key, path))
+        items[:] = kept
 
 
 def _finalize_ok(con, counts: BatchCounts, item_key, title, source, path, text, staged, upload_dir):
@@ -432,6 +494,13 @@ def _convert_fetched(con, to_fetch_by_source, item_meta, counts: BatchCounts):
                 _record(con, item_key, title, source, path, None, "convert_failed", None, round(size_mb, 2), err)
                 counts.convert_failed += 1
                 continue
+            if not text.strip() and ft == "pdf" and config.OCR_ENABLED:
+                text, err = ocr_pdf(staged)
+                if err:
+                    _record(con, item_key, title, source, path, None, "convert_failed", None,
+                            round(size_mb, 2), err)
+                    counts.convert_failed += 1
+                    continue
             if not text.strip():
                 _record(con, item_key, title, source, path, None, "empty_extraction", 0, round(size_mb, 2),
                         "no text extracted (likely scanned, no OCR)")
@@ -511,7 +580,8 @@ def run(max_docs=None, status_only=False, log: Log = print):
 
     log(f"  bulk-fetching {sum(len(v) for v in to_fetch_by_source.values())} file(s) "
         f"across {len(to_fetch_by_source)} source(s)...")
-    bulk_fetch(to_fetch_by_source)
+    bulk_fetch(_fetch_list(to_fetch_by_source))
+    _unpack_members(con, to_fetch_by_source, item_meta, counts)
 
     soffice_queue, sources_uploaded = _convert_fetched(con, to_fetch_by_source, item_meta, counts)
     if soffice_queue:

@@ -28,8 +28,8 @@ copy of each document it can read, and keeps an index of what it found.
 **What you get:** a folder of searchable text files, a small database listing them, and a readable summary report.
 
 **What it cannot do**
-- Scanned pages that are only pictures are not turned into text. They are recorded as empty.
-- Files still packed inside zip-style archives are noted but not converted.
+- Scanned pages that are only pictures are skipped unless you switch on text recognition (OCR), which can misread words.
+- Files packed inside zip-style archives are skipped unless you switch that option on.
 - Converted text can lose layout, especially tables.
 
 **Where does your information go?** Documents are downloaded to your computer and converted there. The tool does
@@ -117,13 +117,14 @@ Note that `.env` is not auto-loaded; export the variables or use `set -a; source
 ## Testing
 ```bash
 pip install pytest ruff
-pytest -q          # 32 tests, no network, no rclone/soffice needed (fake rclone + fake Zotero client)
+pytest -q          # 42 tests, no network, no rclone/soffice needed (fake rclone + fake Zotero client)
 ruff check dlt tests
 ```
 
 ## Limitations and known issues
-- Scanned PDFs are not OCR'd; they are recorded as `empty_extraction`.
-- Files inside archives (path containing `!`) are recorded as `archive_not_persisted`.
+- Scanned PDFs are recorded as `empty_extraction` unless you set `DLT_OCR=1` (needs `ocrmypdf`; PDF only; OCR makes mistakes).
+- Catalogued files inside archives (`a.zip!inner.pdf`) are recorded as `archive_not_persisted` unless you set `DLT_CONVERT_ARCHIVE_MEMBERS=1`. Zip and tar only, not rar/7z, and not `local:` entries. This does not add new archive contents to the catalogue.
+- Neither option reopens rows already recorded. To retry them, delete those rows from `fulltext_md` first (`status='empty_extraction'` or `'archive_not_persisted'`).
 - Text extraction for non-fast-path types needs `markitdown` and `soffice` installed separately.
 
 ## Licence
